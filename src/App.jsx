@@ -1934,7 +1934,7 @@ function ReplaceModal({ open, onClose, pending, drugsWithStock, lots, nurses, db
     <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.65)', zIndex:500, display:'flex', alignItems:'flex-end', justifyContent:'center' }}>
       <div style={{ background:'#fff', borderRadius:'14px 14px 0 0', width:'100%', maxWidth:480, maxHeight:'90vh', display:'flex', flexDirection:'column' }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'14px 16px', borderBottom:'0.5px solid #E0EAE5' }}>
-          <div style={{ fontSize:14, fontWeight:500, color:'#0F6E56' }}>✓ Replace & ปิดรายการ</div>
+          <div style={{ fontSize:14, fontWeight:500, color:'#0F6E56' }}>{isMissing ? '✓ Return & ปิดรายการ' : '✓ Replace & ปิดรายการ'}</div>
           <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', fontSize:20, color:'#8BA898' }}>✕</button>
         </div>
 
@@ -2083,7 +2083,7 @@ function ReplaceModal({ open, onClose, pending, drugsWithStock, lots, nurses, db
           <button className="btn primary full" onClick={submit}
             disabled={!nurse || cart.filter(c=>c.drugId).length===0 || saving}>
             {saving ? 'กำลังบันทึก...' : isMissing 
-              ? `✓ Replace ${cart.filter(c=>c.drugId).length} lots (${cart.reduce((s,c)=>s+c.qty,0)} ชิ้น)${!closeJob?' (ค้างต่อ)':''}`
+              ? `✓ Return ${cart.filter(c=>c.drugId).length} lots (${cart.reduce((s,c)=>s+c.qty,0)} ชิ้น)${!closeJob?' (ค้างต่อ)':''}`
               : `✓ Replace ${cart.filter(c=>c.drugId).length} รายการ${!closeJob?' (ค้างต่อ)':''}`
             }
           </button>
