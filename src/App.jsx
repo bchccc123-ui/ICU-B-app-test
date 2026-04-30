@@ -1059,7 +1059,7 @@ export default function App() {
 
   const alerts = getAlerts()
   const alertCount = alerts.low.length + alerts.out.length + alerts.exp.length + alerts.exchangeDue.length + alerts.exchangeOver.length
-  const unret = withdrawals.filter(w => !w.returned && !w.pending_sync_id && w.usage_type !== 'Missing_Tracked' && w.usage_type !== 'Missing_Unknown' && w.usage_type !== 'Emergency')
+  const unret = withdrawals.filter(w => !w.pending_sync_id && w.usage_type !== 'Missing_Tracked' && w.usage_type !== 'Missing_Unknown' && w.usage_type !== 'Emergency' && (!w.returned || (w.returned_qty !== undefined && w.returned_qty < w.qty)))
   const lastCheck = checks[0]
 
   return (
@@ -2161,10 +2161,10 @@ function PendingView({ pendingSyncs, withdrawals, drugs, nurses, db, setReplaceM
   
   // รวม Stock Returns (withdrawals ที่ยังไม่ได้คืน และไม่มี pending_sync_id)
   const stockReturns = withdrawals.filter(w => 
-    !w.returned && 
     !w.pending_sync_id && 
     w.usage_type !== 'Missing_Tracked' && 
-    w.usage_type !== 'Emergency'
+    w.usage_type !== 'Emergency' &&
+    (!w.returned || (w.returned_qty !== undefined && w.returned_qty < w.qty))
   )
   
   // รวมทุกอย่างเป็น unified list
@@ -2442,10 +2442,16 @@ function PendingView({ pendingSyncs, withdrawals, drugs, nurses, db, setReplaceM
         })
       }
       
-      // Update withdrawal
+      // Update withdrawal — partial or full
       const firstIso = validEntries[0].fullDate || myToISO(validEntries[0].expM, validEntries[0].expY)
+      const returnedNowQty = validEntries.reduce((s, e) => s + (e.qty || 1), 0)
+      const prevReturnedQty = withdrawal.returned_qty || 0
+      const newReturnedQty = prevReturnedQty + returnedNowQty
+      const totalRequired = withdrawal.qty || 0
+      const isFullyReturned = newReturnedQty >= totalRequired
       await updateDoc(doc(db, 'withdrawals', withdrawal.docId), {
-        returned: true,
+        returned_qty: newReturnedQty,
+        returned: isFullyReturned,
         retExp: firstIso,
         return_timestamp: Timestamp.now()
       })
@@ -2598,16 +2604,40 @@ function PendingView({ pendingSyncs, withdrawals, drugs, nurses, db, setReplaceM
                         <span className="b" style={{ marginLeft: 6, background:'#E3F2FD', color:'#1565C0', border:'0.5px solid #64B5F6', padding:'2px 8px', borderRadius:12, fontSize:10, fontWeight:600 }}>เบิกไป ×{item.qty}</span>
                       </div>
                       <div style={{ fontSize: 11, color: '#5F7A6A' }}>{item.nurse}</div>
+                      {/* Partial return progress */}
+                      {(() => {
+                        const _ret = item.returned_qty || 0
+                        const _tot = item.qty || 0
+                        if (_ret === 0 || _tot === 0) return null
+                        const _pct = Math.min(100, Math.round(_ret / _tot * 100))
+                        const _left = Math.max(0, _tot - _ret)
+                        return (
+                          <div style={{ marginTop:5 }}>
+                            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:2 }}>
+                              <span style={{ fontSize:10, color:'#E65100', fontWeight:500 }}>คืนแล้ว {_ret}/{_tot} · ยังเหลือ {_left}</span>
+                              <span style={{ fontSize:10, color:'#8BA898' }}>{_pct}%</span>
+                            </div>
+                            <div style={{ background:'#D6EAE2', borderRadius:999, height:5, overflow:'hidden' }}>
+                              <div style={{ width:`${_pct}%`, height:'100%', background:'#FFB74D', borderRadius:999 }}/>
+                            </div>
+                          </div>
+                        )
+                      })()}
                       <div style={{ fontSize: 10, color: '#8BA898', marginTop: 2 }}>{fmtDTsafe(item.timestamp)}</div>
                     </div>
                     <div className={`aging ${agingClass}`}>⏱ {hours.toFixed(1)} ชม.</div>
                   </div>
                   
-                  {!rs?.open && (
-                    <button onClick={() => openRet(item.docId, item.drugId)} className="btn primary full sm">
-                      ยืนยัน Return + ดูตำแหน่งการวาง
-                    </button>
-                  )}
+                  {!rs?.open && (() => {
+                    const _ret = item.returned_qty || 0
+                    const _tot = item.qty || 0
+                    const _left = Math.max(0, _tot - _ret)
+                    return (
+                      <button onClick={() => openRet(item.docId, item.drugId)} className="btn primary full sm">
+                        {_ret > 0 ? `ยืนยัน Return · เหลืออีก ${_left} ชิ้น` : 'ยืนยัน Return + ดูตำแหน่งการวาง'}
+                      </button>
+                    )
+                  })()}
                   
                   {rs?.open && (
                     <div style={{ marginTop: 8, padding: '10px 12px', background: '#F9FCF9', border: '0.5px solid #D8EAE0', borderRadius: 8 }}>
@@ -2701,8 +2731,18 @@ function PendingView({ pendingSyncs, withdrawals, drugs, nurses, db, setReplaceM
                         <button onClick={() => closeRet(item.docId)} className="btn sm" style={{ flex: 1 }}>
                           ยกเลิก
                         </button>
-                        <button onClick={() => submitReturn(item)} className="btn primary sm" style={{ flex: 1 }}>
-                          ยืนยัน Return + ดูตำแหน่งการวาง
+                        <button onClick={() => submitReturn(item)} className="btn primary sm" style={{ flex: 1 }}
+                          disabled={!rs?.entries?.some(e => e.fullDate || (e.expM && e.expY))}>
+                          {(() => {
+                            const _ret = item.returned_qty || 0
+                            const _tot = item.qty || 0
+                            const _now = rs?.entries?.reduce((s,e)=>s+(e.qty||1),0)||0
+                            const _after = _ret + _now
+                            const _done = _after >= _tot
+                            return _done
+                              ? `✓ Return ${_now} · ครบ ${_tot}/${_tot} — ปิดรายการ`
+                              : `✓ Return ${_now} · ยังเหลือ ${Math.max(0,_tot-_after)}`
+                          })()}
                         </button>
                       </div>
                     </div>
@@ -3154,15 +3194,38 @@ function Dashboard({ drugsWithStock, alerts, unret, lastCheck, lots, lotsOf, cal
           <div className="blink-badge" style={{ position:'absolute', top:-6, left:12, background:'#F44336', color:'#fff', borderRadius:20, minWidth:20, height:20, display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:600, padding:'0 5px', border:'2px solid #fff' }}>
             {unret.length}
           </div>
-          <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:10 }}>
-            <div className="alert-icon-pulse-blue" style={{ width:44, height:44, borderRadius:'50%', background:'#fff', border:'2px solid #42A5F5', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
-              <span className="bounce-icon" style={{ fontSize:22 }}>📥</span>
-            </div>
-            <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontSize:13, fontWeight:600, color:'#0D47A1', wordBreak:'break-word', overflowWrap:'break-word' }}>Pending Returns ({unret.length})</div>
-              <div style={{ fontSize:10, color:'#1565C0', marginTop:1 }}>ใส่ EXP เพื่อดูตำแหน่งวาง</div>
-            </div>
-          </div>
+          {/* Overall progress for partial returns */}
+          {(() => {
+            const _totReq = unret.reduce((s,w) => s + (w.qty||0), 0)
+            const _totRet = unret.reduce((s,w) => s + (w.returned_qty||0), 0)
+            const _pct = _totReq > 0 ? Math.min(100, Math.round(_totRet/_totReq*100)) : 0
+            const _partial = unret.filter(w => (w.returned_qty||0) > 0).length
+            return (
+              <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:10 }}>
+                <div className="alert-icon-pulse-blue" style={{ width:44, height:44, borderRadius:'50%', background:'#fff', border:'2px solid #42A5F5', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+                  <span className="bounce-icon" style={{ fontSize:22 }}>📥</span>
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:'#0D47A1', wordBreak:'break-word', overflowWrap:'break-word' }}>Pending Returns ({unret.length})</div>
+                  <div style={{ fontSize:10, color:'#1565C0', marginTop:1 }}>
+                    ใส่ EXP เพื่อดูตำแหน่งวาง
+                    {_partial > 0 && <span style={{ marginLeft:6, color:'#E65100', fontWeight:500 }}>· กำลังคืน {_partial} รายการ</span>}
+                  </div>
+                  {_totReq > 0 && _totRet > 0 && (
+                    <div style={{ marginTop:5 }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:2 }}>
+                        <span style={{ fontSize:10, color:'#1565C0' }}>คืนแล้ว {_totRet}/{_totReq}</span>
+                        <span style={{ fontSize:10, color:'#1976D2' }}>{_pct}%</span>
+                      </div>
+                      <div style={{ background:'#BBDEFB', borderRadius:999, height:5, overflow:'hidden' }}>
+                        <div style={{ width:`${_pct}%`, height:'100%', background: _pct===100?'#0F6E56':'#42A5F5', borderRadius:999, transition:'width 0.3s' }}/>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
           {unret.map(w => {
             const rs = retStates[w.docId]
             const exLots = lots.filter(l => l.drugId == w.drugId && l.qty > 0).sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
