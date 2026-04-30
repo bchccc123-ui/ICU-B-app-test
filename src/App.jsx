@@ -3309,7 +3309,17 @@ function Dashboard({ drugsWithStock, alerts, unret, lastCheck, lots, lotsOf, cal
                         <button className="btn primary sm" style={{ flex: 1 }}
                           onClick={() => confirmRet(w)}
                           disabled={!rs.entries.some(e => e.fullDate || (e.expM && e.expY))}>
-                          ยืนยัน Return + ดูตำแหน่งวาง
+                          {(() => {
+                            const _prev = w.returned_qty || 0
+                            const _tot  = w.qty || 0
+                            const _now  = rs.entries.reduce((s,e) => s + (e.qty||1), 0)
+                            const _after = _prev + _now
+                            return _after >= _tot
+                              ? `✓ Return ${_now} · ครบ ${_tot}/${_tot} — ปิดรายการ`
+                              : _prev > 0
+                                ? `✓ Return ${_now} · ยังเหลือ ${Math.max(0,_tot-_after)}`
+                                : 'ยืนยัน Return + ดูตำแหน่งวาง'
+                          })()}
                         </button>
                         <button className="btn sm" onClick={() => closeRet(w.docId)}>ยกเลิก</button>
                       </div>
