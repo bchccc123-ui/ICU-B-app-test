@@ -1801,13 +1801,26 @@ function ReplaceModal({ open, onClose, pending, drugsWithStock, lots, nurses, db
         drugGroups[drug.id].lots.push({ expiry: newExpiry, qty: item.qty })
       }
 
-      // 4. Close pending if requested
-      if (closeJob) {
+      // 4. Update returned_qty; auto-close when fully returned
+      const returnedNow = validItems.reduce((s,i) => s + i.qty, 0)
+      if (isMissing) {
+        const prevReturned = pending.returned_qty || 0
+        const totalRequired = pending.qty || 0
+        const newReturned = prevReturned + returnedNow
+        const isComplete = newReturned >= totalRequired
+        await updateDoc(doc(db, 'pending_syncs', pending.docId), {
+          returned_qty: newReturned,
+          ...(isComplete ? {
+            status: 'completed', completed_at: Timestamp.now(), completed_by: nurse,
+            drug_name: validItems.map(i => dl.find(d=>d.id==i.drugId)?.name).filter(Boolean).join(', ')
+          } : {})
+        })
+      } else if (closeJob) {
         await updateDoc(doc(db, 'pending_syncs', pending.docId), {
           status: 'completed', completed_at: Timestamp.now(),
           completed_by: nurse,
           drug_name: validItems.map(i => dl.find(d=>d.id==i.drugId)?.name).filter(Boolean).join(', '),
-          qty: validItems.reduce((s,i) => s + i.qty, 0)
+          qty: returnedNow
         })
       }
 
@@ -2062,9 +2075,32 @@ function ReplaceModal({ open, onClose, pending, drugsWithStock, lots, nurses, db
             )
           })}
 
-          {/* Close job toggle */}
-          <div style={{ marginTop:10, background:'#F4F7F5', borderRadius:10, padding:'10px 12px' }}>
-            <label style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer' }}>
+          {/* Close job toggle / return progress */}
+          {isMissing ? (() => {
+            const prevReturned = pending?.returned_qty || 0
+            const totalRequired = pending?.qty || 0
+            const cartQty = cart.reduce((s,c) => s + c.qty, 0)
+            const afterReturn = prevReturned + cartQty
+            const pct = totalRequired > 0 ? Math.min(100, Math.round(afterReturn / totalRequired * 100)) : 0
+            const isComplete = afterReturn >= totalRequired
+            return (
+              <div style={{ marginTop:10, background:'#F4F7F5', borderRadius:10, padding:'10px 12px' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+                  <span style={{ fontSize:12, fontWeight:500, color:'#1A2E25' }}>ความคืบหน้าการคืนยา</span>
+                  <span style={{ fontSize:12, fontWeight:600, color: isComplete ? '#0F6E56' : '#E65100' }}>
+                    {afterReturn}/{totalRequired} amp
+                  </span>
+                </div>
+                <div style={{ background:'#D6EAE2', borderRadius:999, height:7, overflow:'hidden' }}>
+                  <div style={{ width:`${pct}%`, height:'100%', background: isComplete ? '#0F6E56' : '#FFB74D', borderRadius:999, transition:'width 0.3s' }}/>
+                </div>
+                <div style={{ fontSize:10, color:'#8BA898', marginTop:5 }}>
+                  {isComplete ? '✓ ครบแล้ว — จะปิดรายการอัตโนมัติ' : `ยังค้างอีก ${totalRequired - afterReturn} amp — pending จะยังค้างไว้`}
+                </div>
+              </div>
+            )
+          })() : (
+            <label style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer', marginTop:10, background:'#F4F7F5', borderRadius:10, padding:'10px 12px' }}>
               <input type="checkbox" checked={closeJob} onChange={e=>setCloseJob(e.target.checked)}
                 style={{ width:18, height:18, accentColor:'#0F6E56', cursor:'pointer' }} />
               <div>
@@ -2072,7 +2108,7 @@ function ReplaceModal({ open, onClose, pending, drugsWithStock, lots, nurses, db
                 <div style={{ fontSize:10, color:'#8BA898', marginTop:1 }}>ยกเลิกถ้ายาคืนยังไม่ครบ</div>
               </div>
             </label>
-          </div>
+          )}
 
           <div style={{ marginTop:8, padding:'8px 10px', background:'#E1F5EE', borderRadius:8, fontSize:10, color:'#5F7A6A' }}>
             💡 ตัดสต็อกเดิม (FEFO) → เพิ่ม lot ใหม่ → บันทึกการใช้ → ปิดรายการ
@@ -2082,9 +2118,16 @@ function ReplaceModal({ open, onClose, pending, drugsWithStock, lots, nurses, db
         <div style={{ padding:'10px 14px', borderTop:'0.5px solid #E0EAE5' }}>
           <button className="btn primary full" onClick={submit}
             disabled={!nurse || cart.filter(c=>c.drugId).length===0 || saving}>
-            {saving ? 'กำลังบันทึก...' : isMissing 
-              ? `✓ Return ${cart.filter(c=>c.drugId).length} lots (${cart.reduce((s,c)=>s+c.qty,0)} ชิ้น)${!closeJob?' (ค้างต่อ)':''}`
-              : `✓ Replace ${cart.filter(c=>c.drugId).length} รายการ${!closeJob?' (ค้างต่อ)':''}`
+            {saving ? 'กำลังบันทึก...' : isMissing ? (() => {
+              const _prev = pending?.returned_qty || 0
+              const _tot  = pending?.qty || 0
+              const _now  = cart.reduce((s,c) => s + c.qty, 0)
+              const _after = _prev + _now
+              const _done  = _after >= _tot
+              return _done
+                ? `✓ Return ${_now} amp · ครบ ${_tot}/${_tot} — ปิดรายการ`
+                : `✓ Return ${_now} amp · ยังเหลือ ${_tot - _after} amp`
+            })() : `✓ Replace ${cart.filter(c=>c.drugId).length} รายการ${!closeJob?' (ค้างต่อ)':''}`
             }
           </button>
         </div>
@@ -2495,14 +2538,43 @@ function PendingView({ pendingSyncs, withdrawals, drugs, nurses, db, setReplaceM
                         {item.source === 'emergency' && <span className="b bo" style={{ marginLeft: 6 }}>Emergency</span>}
                       </div>
                       <div style={{ fontSize: 11, color: '#5F7A6A' }}>{drugName} · {item.nurse}</div>
+                      {item.source === 'missing_tracked' && item.qty > 0 && (() => {
+                        const ret = item.returned_qty || 0
+                        const tot = item.qty || 0
+                        const pct = Math.min(100, Math.round(ret / tot * 100))
+                        const done = ret >= tot
+                        return (
+                          <div style={{ marginTop:5 }}>
+                            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:3 }}>
+                              <span style={{ fontSize:10, color: done ? '#0F6E56' : '#E65100', fontWeight:500 }}>
+                                {done ? '✓ คืนครบแล้ว' : `คืนแล้ว ${ret}/${tot} amp`}
+                              </span>
+                              <span style={{ fontSize:10, color:'#8BA898' }}>{pct}%</span>
+                            </div>
+                            <div style={{ background:'#D6EAE2', borderRadius:999, height:5, overflow:'hidden' }}>
+                              <div style={{ width:`${pct}%`, height:'100%', background: done ? '#0F6E56' : '#FFB74D', borderRadius:999 }}/>
+                            </div>
+                          </div>
+                        )
+                      })()}
                       <div style={{ fontSize: 10, color: '#8BA898', marginTop: 2 }}>{fmtDTsafe(item.timestamp)}</div>
                     </div>
                     <div className={`aging ${agingClass}`}>⏱ {hours.toFixed(1)} ชม.</div>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    {item.source === 'missing_tracked' ? (
-                      <button className="btn primary full sm" onClick={() => setMissingReturnModal(item)}>✓ Return</button>
-                    ) : (
+                    {item.source === 'missing_tracked' ? (() => {
+                      const _ret = item.returned_qty || 0
+                      const _tot = item.qty || 0
+                      const _done = _tot > 0 && _ret >= _tot
+                      const _left = Math.max(0, _tot - _ret)
+                      return _done ? (
+                        <div style={{ flex:1, padding:'6px 10px', background:'#E1F5EE', borderRadius:8, fontSize:11, color:'#0F6E56', fontWeight:500, textAlign:'center' }}>✓ คืนครบแล้ว {_tot} amp</div>
+                      ) : (
+                        <button className="btn primary full sm" onClick={() => setMissingReturnModal(item)}>
+                          ✓ Return{_ret > 0 ? ` (เหลือ ${_left} amp)` : ''}
+                        </button>
+                      )
+                    })() : (
                       <button className="btn primary full sm" onClick={() => setReplaceModal(item)}>✓ Replace</button>
                     )}
                     <button className="btn danger sm" onClick={() => deletePending(item.docId)}>✕</button>
@@ -3179,6 +3251,11 @@ function Dashboard({ drugsWithStock, alerts, unret, lastCheck, lots, lotsOf, cal
           const h = (new Date() - (p.timestamp?.toDate ? p.timestamp.toDate() : new Date(p.timestamp))) / 3600000
           return h >= 6
         })
+        // คำนวณ progress รวมทุก pending
+        const totalRequired = missingPending.reduce((s,p) => s + (p.qty || 0), 0)
+        const totalReturned = missingPending.reduce((s,p) => s + (p.returned_qty || 0), 0)
+        const partialCount  = missingPending.filter(p => (p.returned_qty || 0) > 0 && (p.returned_qty || 0) < (p.qty || 0)).length
+        const overallPct    = totalRequired > 0 ? Math.min(100, Math.round(totalReturned / totalRequired * 100)) : 0
         return (
           <div style={{ background:'#E3F2FD', border:'1.5px solid #64B5F6', borderRadius:14, padding:'12px 14px', cursor:'pointer', position:'relative', transition:'all 0.2s ease', marginBottom:8 }}
             onClick={() => setCurTab('pending')}
@@ -3199,7 +3276,20 @@ function Dashboard({ drugsWithStock, alerts, unret, lastCheck, lots, lotsOf, cal
                 </div>
                 <div style={{ fontSize:11, color:'#1976D2', marginTop:3, lineHeight:1.5 }}>
                   🔍 Missing Tracked: {missingPending.length} รายการ
+                  {partialCount > 0 && <span style={{ marginLeft:6, color:'#E65100', fontWeight:500 }}>· กำลังคืน {partialCount} รายการ</span>}
                 </div>
+                {/* Overall progress bar */}
+                {totalRequired > 0 && (
+                  <div style={{ marginTop:6 }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:2 }}>
+                      <span style={{ fontSize:10, color:'#1565C0' }}>คืนแล้ว {totalReturned}/{totalRequired} amp</span>
+                      <span style={{ fontSize:10, color:'#1976D2' }}>{overallPct}%</span>
+                    </div>
+                    <div style={{ background:'#BBDEFB', borderRadius:999, height:5, overflow:'hidden' }}>
+                      <div style={{ width:`${overallPct}%`, height:'100%', background: overallPct===100 ? '#0F6E56' : '#2196F3', borderRadius:999, transition:'width 0.3s' }}/>
+                    </div>
+                  </div>
+                )}
                 {hasOld && (
                   <div style={{ fontSize:10, color:'#0D47A1', marginTop:3, fontWeight:500 }}>⚠️ มีรายการค้างเกิน 6 ชม.</div>
                 )}
