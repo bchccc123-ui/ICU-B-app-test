@@ -2967,8 +2967,9 @@ function Dashboard({ drugsWithStock, alerts, unret, lastCheck, lots, lotsOf, cal
   const dl = drugsWithStock()
   const openRet = docId => {
     const w = unret.find(x => x.docId === docId)
-    // สร้าง entries เริ่มต้น 1 ชุด
-    const initEntries = [{ qty: w?.qty || 1, expM: '', expY: '', fullDate: '', preview: null }]
+    // qty เริ่มต้น = ที่ยังเหลือ (qty - returned_qty)
+    const remaining = Math.max(1, (w?.qty || 1) - (w?.returned_qty || 0))
+    const initEntries = [{ qty: remaining, expM: '', expY: '', fullDate: '', preview: null }]
     setRetStates(s => ({ ...s, [docId]: { open: true, entries: initEntries } }))
   }
   const closeRet = docId => setRetStates(s => ({ ...s, [docId]: undefined }))
@@ -3057,8 +3058,13 @@ function Dashboard({ drugsWithStock, alerts, unret, lastCheck, lots, lotsOf, cal
         setPutaway({ drug, returnLots, pa, context: 'return' })
       }
     }
+    const _retNow = validEntries.reduce((s, e) => s + (e.qty || 1), 0)
+    const _prevRet = w.returned_qty || 0
+    const _newRet  = _prevRet + _retNow
+    const _isFull  = _newRet >= (w.qty || 0)
     await updateDoc(doc(db, 'withdrawals', w.docId), { 
-      returned: true, 
+      returned_qty: _newRet,
+      returned: _isFull,
       retExp: validEntries[0]?.fullDate || myToISO(validEntries[0]?.expM, validEntries[0]?.expY),
       return_timestamp: Timestamp.now()
     })
@@ -3235,7 +3241,20 @@ function Dashboard({ drugsWithStock, alerts, unret, lastCheck, lots, lotsOf, cal
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 12, fontWeight: 500 }}>{w.bed} — {w.drugName}</span>
                     <span className="b bb">เบิกไป ×{w.qty}</span>
+                    {(w.returned_qty || 0) > 0 && (
+                      <span style={{ fontSize:10, color:'#E65100', fontWeight:500 }}>คืนแล้ว {w.returned_qty}/{w.qty}</span>
+                    )}
                   </div>
+                  {(w.returned_qty || 0) > 0 && (() => {
+                    const _pct = Math.min(100, Math.round((w.returned_qty||0) / (w.qty||1) * 100))
+                    return (
+                      <div style={{ marginTop:4, marginBottom:2 }}>
+                        <div style={{ background:'#D6EAE2', borderRadius:999, height:4, overflow:'hidden' }}>
+                          <div style={{ width:`${_pct}%`, height:'100%', background:'#FFB74D', borderRadius:999 }}/>
+                        </div>
+                      </div>
+                    )
+                  })()}
                   <div style={{ fontSize: 10, color: '#8BA898', marginTop: 2 }}>{w.nurse} · {w.ts && fmtMY(w.ts.toDate ? w.ts.toDate().toISOString() : w.ts)}</div>
                   {rs?.open && (
                     <div className="retpanel">
@@ -3297,9 +3316,14 @@ function Dashboard({ drugsWithStock, alerts, unret, lastCheck, lots, lotsOf, cal
                     </div>
                   )}
                 </div>
-                {!rs?.open && (
-                  <button onClick={() => openRet(w.docId)} style={{ padding: '5px 11px', borderRadius: 8, border: '0.5px solid #CECBF6', background: '#EEEDFE', color: '#3C3489', fontSize: 11, fontWeight: 500, cursor: 'pointer', flexShrink: 0 }}>Return</button>
-                )}
+                {!rs?.open && (() => {
+                  const _left = Math.max(0, (w.qty||0) - (w.returned_qty||0))
+                  return (
+                    <button onClick={() => openRet(w.docId)} style={{ padding: '5px 11px', borderRadius: 8, border: '0.5px solid #CECBF6', background: '#EEEDFE', color: '#3C3489', fontSize: 11, fontWeight: 500, cursor: 'pointer', flexShrink: 0 }}>
+                      {(w.returned_qty||0) > 0 ? `Return (เหลือ ${_left})` : 'Return'}
+                    </button>
+                  )
+                })()}
               </div>
             )
           })}
