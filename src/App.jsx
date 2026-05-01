@@ -2187,6 +2187,7 @@ function PendingView({ pendingSyncs, withdrawals, drugs, nurses, db, setReplaceM
   const stockReturns = withdrawals.filter(w => 
     !w.pending_sync_id && 
     w.usage_type !== 'Missing_Tracked' && 
+    w.usage_type !== 'Missing_Unknown' && 
     w.usage_type !== 'Emergency' &&
     (!w.returned || (w.returned_qty !== undefined && w.returned_qty < w.qty))
   )
