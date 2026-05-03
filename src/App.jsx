@@ -1941,18 +1941,18 @@ function ReplaceModal({ open, onClose, pending, drugsWithStock, lots, nurses, db
       }
 
       // Helper: คำนวณ pa ด้วย lots หลังตัด FEFO
-      const calcPutawayWithLots = (drugId, expiry, existingLots) => {
+      const calcPutawayWithLots = (drugId, returnLots, existingLots) => {
         const drug = dl.find(d => d.id == drugId)
         if (!drug) return null
         
         // ใช้ getDrugDir() เหมือน calculateFEFOWithReturns
         const dir = getDrugDir(drugId)
         
-        // ✨ NEW: แตก lots เป็น individual vials
-        const sortedLots = [...existingLots].sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
+        // ✨ แตก existing lots เป็น individual vials
+        const sortedExisting = [...existingLots].sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
         const existingVials = []
         let vialCounter = 1
-        for (const lot of sortedLots) {
+        for (const lot of sortedExisting) {
           for (let i = 0; i < lot.qty; i++) {
             existingVials.push({
               exp: fmtMY(lot.expiry),
@@ -1963,17 +1963,26 @@ function ReplaceModal({ open, onClose, pending, drugsWithStock, lots, nurses, db
           }
         }
         
-        // คำนวณ position โดยใช้ vials
-        const sorted = [...existingVials, { expiry, isNew: true }]
-          .sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
+        // ✨ แตก return lots เป็น individual vials
+        const returnVials = []
+        for (const retLot of returnLots) {
+          for (let i = 0; i < retLot.qty; i++) {
+            returnVials.push({
+              exp: fmtMY(retLot.expiry),
+              expiry: retLot.expiry,
+              vialNum: vialCounter++,
+              isReturn: true
+            })
+          }
+        }
         
-        const newIndex = sorted.findIndex(l => l.isNew)
-        const position = newIndex + 1
+        // คำนวณ total vials
+        const totalVials = existingVials.length + returnVials.length
         
         return {
           direction: dir,
-          position,
-          existingLots: existingVials,  // ส่ง vials แทน lots
+          position: totalVials,  // total vials หลังคืน
+          existingLots: existingVials,  // ส่ง existing vials
           par: drug.par
         }
       }
@@ -1999,7 +2008,7 @@ function ReplaceModal({ open, onClose, pending, drugsWithStock, lots, nurses, db
           })
         } else {
           const sortedLots = returnLots.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
-          const pa = calcPutawayWithLots(drug.id, sortedLots[0].expiry, existingLots)
+          const pa = calcPutawayWithLots(drug.id, sortedLots, existingLots)
           
           if (sortedLots.length === 1) {
             setPutaway({
@@ -2040,7 +2049,7 @@ function ReplaceModal({ open, onClose, pending, drugsWithStock, lots, nurses, db
               returnLots: sortedLots.length > 1 ? sortedLots : null,
               qty: sortedLots.length === 1 ? sortedLots[0].qty : null,
               expiry: sortedLots[0].expiry,
-              pa: calcPutawayWithLots(drug.id, sortedLots[0].expiry, existingLots)
+              pa: calcPutawayWithLots(drug.id, sortedLots, existingLots)
             }
           }
         })
