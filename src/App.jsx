@@ -210,6 +210,8 @@ const fmtDsafe = d => {
   return `${dd}/${mm}/${yyyy}`
 }
 const myToISO = (m, y) => { if (!m || !y) return ''; const last = new Date(+y, +m, 0).getDate(); return `${y}-${String(m).padStart(2,'0')}-${last}` }
+// คืนค่า YYYY-MM-DD ที่ถูกต้องตาม shift logic:
+// Night Shift ที่ save หลัง 00:00 แต่ก่อน 08:00 → ย้อนวันกลับ 1 วัน (ยังเป็นเวรของวันก่อน)
 const shiftDateKey = (ts, shift) => {
   const d = new Date(ts)
   const isNight = (shift || '').includes('Night')
@@ -426,7 +428,7 @@ function PutawayOverlay({ drug, drugs, qty, expiry, returnLots, pa, fefoExp, con
                 {/* Header */}
                 <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
                   <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                    <div style={{ fontSize:15, fontWeight:700, color:'#fff', background:'rgba(255,255,255,0.1)', width:26, height:26, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12 }}>
+                    <div style={{ fontWeight:700, color:'#fff', background:'rgba(255,255,255,0.1)', width:26, height:26, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12 }}>
                       {idx + 1}
                     </div>
                     <div>
@@ -452,7 +454,7 @@ function PutawayOverlay({ drug, drugs, qty, expiry, returnLots, pa, fefoExp, con
                       <span>Slot {item.groupName || 'M-04'}</span>
                     </div>
                     <div style={{ fontSize:11, color:'rgba(255,255,255,0.85)' }}>
-                      Single stock - วางตรงนี้แล้วนำของเดิมออก FEFO
+                      Single stock - วางลงตำแหน่งเดิม
                     </div>
                   </div>
                 ) : (
@@ -487,43 +489,76 @@ function PutawayOverlay({ drug, drugs, qty, expiry, returnLots, pa, fefoExp, con
                             </>
                           )}
                         </div>
-                        <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
-                          {/* Build timeline array และ reverse สำหรับ RTL */}
+                        <div style={{ display:'flex', gap:4, flexWrap:'wrap', overflowX:'auto', maxWidth:'100%' }}>
+                          {/* Build timeline array แสดง individual vials */}
                           {(() => {
                             const timelineItems = []
+                            const existingVials = item.pa.existingLots || []
+                            const numReturning = item.qty || item.returnLots?.reduce((s,l)=>s+l.qty,0) || 1
                             
-                            // Build timeline
-                            item.pa.existingLots?.forEach((lot, lotIdx) => {
-                              const lotPosition = lotIdx + 1
-                              const isNewPosition = lotPosition === item.pa.position
-                              
-                              if (isNewPosition) {
-                                timelineItems.push(
-                                  <div key={`new-${lotIdx}`} style={{ fontSize:9, padding:'4px 6px', borderRadius:6, background:'rgba(93,219,167,0.3)', border:'1px solid rgba(93,219,167,0.5)', color:'#5DDBA7', fontWeight:700, display:'flex', alignItems:'center', gap:2 }}>
-                                    <span>📍</span>
-                                    <span>วาง</span>
-                                  </div>
-                                )
-                              }
-                              
+                            // เพิ่ม existing vials
+                            existingVials.forEach((vial, idx) => {
                               timelineItems.push(
-                                <div key={lotIdx} style={{ fontSize:9, padding:'4px 6px', borderRadius:6, background:'rgba(255,255,255,0.08)', border:'1px solid rgba(255,255,255,0.15)', color:'rgba(255,255,255,0.6)' }}>
-                                  {fmtMY(lot.expiry)}
+                                <div key={`vial-${idx}`} style={{ 
+                                  fontSize:9, 
+                                  padding:'4px 6px', 
+                                  borderRadius:6, 
+                                  background:'rgba(255,255,255,0.08)', 
+                                  border:'1px solid rgba(255,255,255,0.15)', 
+                                  color:'rgba(255,255,255,0.6)',
+                                  whiteSpace:'nowrap'
+                                }}>
+                                  {fmtMY(vial.expiry)}
+                                  <div style={{fontSize:7, opacity:0.5}}>เดิม</div>
                                 </div>
                               )
                             })
                             
-                            // Add "วาง" at the end if position = last
-                            if (item.pa.position === (item.pa.existingLots?.length || 0) + 1) {
-                              timelineItems.push(
-                                <div key="new-last" style={{ fontSize:9, padding:'4px 6px', borderRadius:6, background:'rgba(93,219,167,0.3)', border:'1px solid rgba(93,219,167,0.5)', color:'#5DDBA7', fontWeight:700, display:'flex', alignItems:'center', gap:2 }}>
-                                  <span>📍</span>
-                                  <span>วาง</span>
-                                </div>
-                              )
+                            // เพิ่ม new vials (วางตรงนี้) - แสดง EXP แต่ละ lot
+                            if (item.returnLots && item.returnLots.length > 0) {
+                              // หลาย lots - แสดง EXP แต่ละอัน
+                              item.returnLots.forEach((lot, lotIdx) => {
+                                for (let i = 0; i < lot.qty; i++) {
+                                  timelineItems.push(
+                                    <div key={`new-${lotIdx}-${i}`} style={{ 
+                                      fontSize:9, 
+                                      padding:'4px 6px', 
+                                      borderRadius:6, 
+                                      background:'rgba(93,219,167,0.3)', 
+                                      border:'1px solid rgba(93,219,167,0.5)', 
+                                      color:'#5DDBA7', 
+                                      fontWeight:700,
+                                      whiteSpace:'nowrap'
+                                    }}>
+                                      📍 {fmtMY(lot.expiry)}
+                                      <div style={{fontSize:7, opacity:0.8}}>วาง</div>
+                                    </div>
+                                  )
+                                }
+                              })
+                            } else {
+                              // Single lot - แสดง EXP
+                              const numReturning = item.qty || 1
+                              for (let i = 0; i < numReturning; i++) {
+                                timelineItems.push(
+                                  <div key={`new-${i}`} style={{ 
+                                    fontSize:9, 
+                                    padding:'4px 6px', 
+                                    borderRadius:6, 
+                                    background:'rgba(93,219,167,0.3)', 
+                                    border:'1px solid rgba(93,219,167,0.5)', 
+                                    color:'#5DDBA7', 
+                                    fontWeight:700,
+                                    whiteSpace:'nowrap'
+                                  }}>
+                                    📍 {fmtMY(item.expiry)}
+                                    <div style={{fontSize:7, opacity:0.8}}>วาง</div>
+                                  </div>
+                                )
+                              }
                             }
                             
-                            // Reverse สำหรับ RTL
+                            // Reverse เฉพาะ RTL
                             if (item.pa.direction === 'rtl') {
                               return timelineItems.reverse()
                             }
@@ -603,15 +638,38 @@ function PutawayOverlay({ drug, drugs, qty, expiry, returnLots, pa, fefoExp, con
     { bg:'#56360A', border:'#F5C842', text:'#fff', label:'#F5C842' },
   ]
 
-  // รวม existing lots + ทุก return lot แล้ว sort ascending EXP
-  const existingLots = pa.existingLots || []
+  // รวม existing vials + ทุก return vial แล้ว sort ascending EXP
+  const existingVials = pa.existingLots || []
+  
+  // แตก returnLots เป็น individual vials
+  const returnVials = []
+  let returnVialCounter = (existingVials.length || 0) + 1
+  for (const retLot of retLots) {
+    const retQty = retLot.qty || 1
+    for (let i = 0; i < retQty; i++) {
+      returnVials.push({
+        exp: fmtMY(retLot.expiry),
+        expiry: retLot.expiry,
+        vialNum: returnVialCounter++,
+        isReturn: true,
+        retIdx: retLots.indexOf(retLot)
+      })
+    }
+  }
+  
   const allSorted = [
-    ...existingLots.map(l => ({ exp: l.exp, expiry: l.expiry, isReturn: false, retIdx: -1 })),
-    ...retLots.map((l, i) => ({ exp: fmtMY(l.expiry), expiry: l.expiry, qty: l.qty, isReturn: true, retIdx: i })),
+    ...existingVials.map(v => ({ 
+      exp: v.exp, 
+      expiry: v.expiry, 
+      vialNum: v.vialNum,
+      isReturn: false, 
+      retIdx: -1 
+    })),
+    ...returnVials
   ].sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
 
   const total = allSorted.length
-  const totalRetQty = retLots.reduce((s, l) => s + (l.qty || 1), 0)
+  const totalRetQty = returnVials.length
 
   // ── helper: ตำแหน่งของแต่ละ return lot ──
   const getPosInfo = (retIdx) => {
@@ -666,8 +724,8 @@ function PutawayOverlay({ drug, drugs, qty, expiry, returnLots, pa, fefoExp, con
 
   // สำหรับ RTL แสดงจากขวาไปซ้าย → reverse
   const displayLots = dir === 'rtl' ? [...allSorted].reverse() : allSorted
-  // fb: หน้าอยู่ล่าง หลังอยู่บน
-  const fbLots = [...allSorted].reverse()
+  // FB: หน้าอยู่ซ้าย หลังอยู่ขวา → ไม่ reverse (แสดงตาม allSorted: เก่า→ใหม่)
+  const fbLots = allSorted
 
   const pillStyle = { background:'rgba(255,255,255,0.18)', borderRadius:20, padding:'3px 10px', fontSize:11, color:'#fff' }
   const rowStyle  = { display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 0', fontSize:12, color:'rgba(255,255,255,0.85)', borderBottom:'1px solid rgba(255,255,255,0.08)' }
@@ -696,25 +754,24 @@ function PutawayOverlay({ drug, drugs, qty, expiry, returnLots, pa, fefoExp, con
                 : <><span style={{ color:c.pickClr }}>◄ ซ้าย (หยิบก่อน)</span><span style={{ color:dimTxt }}>ขวา ►</span></>}
             </div>
             <div style={{ display:'flex', gap:5, overflowX:'auto' }}>
-              {displayLots.map((l, i) => {
-                const rc = l.isReturn ? RETURN_COLORS[l.retIdx] : null
+              {displayLots.map((v, i) => {
+                const rc = v.isReturn ? RETURN_COLORS[v.retIdx] : null
                 return (
                   <div key={i} style={{
-                    flex:1, minWidth:52, borderRadius:9, padding:'8px 4px', textAlign:'center',
+                    flex:0, minWidth:52, borderRadius:9, padding:'8px 4px', textAlign:'center',
                     background: rc ? rc.bg : 'rgba(255,255,255,0.1)',
                     border: rc ? `2px solid ${rc.border}` : '1.5px solid rgba(255,255,255,0.15)',
                     color: rc ? rc.text : 'rgba(255,255,255,0.7)',
-                    position:'relative', marginTop: l.isReturn ? 22 : 0,
+                    position:'relative', marginTop: v.isReturn ? 22 : 0,
                     boxShadow: rc ? `0 0 10px ${rc.border}44` : 'none',
                   }}>
-                    {l.isReturn && (
+                    {v.isReturn && (
                       <div style={{ position:'absolute', top:-18, left:'50%', transform:'translateX(-50%)', fontSize:9, fontWeight:800, color:rc.label, whiteSpace:'nowrap', background:ovBg, padding:'1px 5px', borderRadius:4 }}>
-                        ▶ {retLots.length > 1 ? `lot ${l.retIdx + 1}` : 'วาง'}
+                        ▶ วาง
                       </div>
                     )}
-                    <div style={{ fontSize:11, fontWeight:800 }}>{l.exp}</div>
-                    <div style={{ fontSize:9, marginTop:2, opacity:0.8 }}>{l.isReturn ? 'คืน' : 'เดิม'}</div>
-                    {l.isReturn && <div style={{ fontSize:9, marginTop:3, color:rc.label, fontWeight:700 }}>{pickArrow} วาง</div>}
+                    <div style={{ fontSize:12, fontWeight:800, marginTop:2 }}>{v.exp}</div>
+                    <div style={{ fontSize:9, marginTop:4, opacity:0.7 }}>{v.isReturn ? 'ใหม่' : 'เดิม'}</div>
                   </div>
                 )
               })}
@@ -726,34 +783,32 @@ function PutawayOverlay({ drug, drugs, qty, expiry, returnLots, pa, fefoExp, con
             <div style={{ fontSize:9, color:dimTxt, fontWeight:600, textAlign:'center', marginBottom:8, letterSpacing:1 }}>↑ หลังชั้น</div>
             {/* กล่องยา compact — จัดกึ่งกลาง ไม่เต็มหน้าจอ */}
             <div style={{ display:'flex', flexDirection:'column', gap:6, alignItems:'center' }}>
-              {fbLots.map((l, i) => {
-                const rc = l.isReturn ? RETURN_COLORS[l.retIdx] : null
-                const realIdx = allSorted.indexOf(l)
+              {fbLots.map((v, i) => {
+                const rc = v.isReturn ? RETURN_COLORS[v.retIdx] : null
+                const realIdx = allSorted.indexOf(v)
                 const isFront = realIdx === 0, isBack = realIdx === total - 1
                 const posWord = isFront ? 'หน้าสุด' : isBack ? 'หลังสุด' : `ที่ ${realIdx + 1}`
                 return (
                   <div key={i} style={{
                     display:'flex', alignItems:'center', borderRadius:10, overflow:'hidden',
-                    width:180, minHeight:82,
+                    width:200, minHeight:66,
                     background: rc ? rc.bg : 'rgba(255,255,255,0.07)',
                     border: rc ? `2px solid ${rc.border}` : '1.5px solid rgba(255,255,255,0.1)',
                     boxShadow: rc ? `0 0 12px ${rc.border}33` : 'none',
                   }}>
                     {/* Left badge */}
                     <div style={{
-                      width:52, flexShrink:0, display:'flex', flexDirection:'column',
+                      width:68, flexShrink:0, display:'flex', flexDirection:'column',
                       alignItems:'center', justifyContent:'center', padding:'8px 4px',
                       borderRight:'1px solid rgba(255,255,255,0.08)', alignSelf:'stretch',
                     }}>
-                      <div style={{ fontSize:12, fontWeight:700, lineHeight:1, color: rc ? rc.label : 'rgba(255,255,255,0.4)' }}>{realIdx + 1}</div>
-                      <div style={{ fontSize:12, fontWeight:800, marginTop:2, color: rc ? rc.label : 'rgba(255,255,255,0.3)' }}>{posWord}</div>
+                      <div style={{ fontSize:11, fontWeight:700, lineHeight:1.2, color: rc ? rc.label : 'rgba(255,255,255,0.5)', textAlign:'center' }}>{posWord}</div>
                     </div>
-                    {/* Right: EXP + type + arrow */}
-                    <div style={{ flex:1, padding:'0 8px' }}>
-                      <div style={{ fontSize:13, fontWeight:800, color:'#fff' }}>{l.exp}</div>
+                    {/* Right: EXP + type */}
+                    <div style={{ flex:1, padding:'0 10px' }}>
+                      <div style={{ fontSize:13, fontWeight:800, color:'#fff' }}>{v.exp}</div>
                       <div style={{ fontSize:9, marginTop:2, color: rc ? rc.label : 'rgba(255,255,255,0.4)' }}>
-                        {l.isReturn ? (retLots.length > 1 ? `คืน lot ${l.retIdx + 1}` : 'คืน') : 'เดิม'}
-                        {l.isReturn ? <span style={{ marginLeft:4, fontWeight:800 }}>← วาง</span> : null}
+                        {v.isReturn ? '📍 วางตรงนี้' : 'ยาเดิม'}
                       </div>
                     </div>
                   </div>
@@ -770,7 +825,7 @@ function PutawayOverlay({ drug, drugs, qty, expiry, returnLots, pa, fefoExp, con
           </>
         )}
         <div style={{ textAlign:'center', fontSize:10, color:'rgba(255,255,255,0.3)', marginTop:7, paddingTop:7, borderTop:'1px solid rgba(255,255,255,0.07)' }}>
-          📋 เรียงตาม EXP — {total} lots ทั้งหมด (เติมใหม่ {totalRetQty} {drug.unit})
+          📋 เรียงตาม EXP — {total} vials ทั้งหมด (เติมใหม่ {totalRetQty} {drug.unit})
         </div>
       </div>
 
@@ -822,6 +877,7 @@ export default function App() {
   const [removals, setRemovals] = useState([])
   const [expirySnapshots, setExpirySnapshots] = useState([])
   const [pendingSyncs, setPendingSyncs] = useState([])
+  const [stockAdditions, setStockAdditions] = useState([])
   const [nurses, setNurses] = useState([])
   const [groups, setGroups] = useState(STORAGE_GROUPS)
   const [seeded, setSeeded] = useState(false)
@@ -906,6 +962,9 @@ export default function App() {
     }))
     unsubs.push(onSnapshot(query(collection(db, 'pending_syncs'), orderBy('timestamp', 'desc')), s => {
       setPendingSyncs(s.docs.map(d => ({ docId: d.id, ...d.data() })))
+    }))
+    unsubs.push(onSnapshot(query(collection(db, 'stock_additions'), orderBy('ts', 'desc')), s => {
+      setStockAdditions(s.docs.map(d => ({ docId: d.id, ...d.data() })))
     }))
     unsubs.push(onSnapshot(collection(db, 'storage_groups'), s => {
       if (!s.empty) {
@@ -1005,9 +1064,25 @@ export default function App() {
     const putSide  = dir === 'fb' ? 'หลังชั้น' : dir === 'ltr' ? 'ขวา'   : 'ซ้าย'
     const labelPick = dir === 'fb' ? 'วางหน้าสุด'  : dir === 'ltr' ? 'วางซ้ายสุด'  : 'วางขวาสุด'
     const labelPut  = dir === 'fb' ? 'วางหลังสุด' : dir === 'ltr' ? 'วางขวาสุด' : 'วางซ้ายสุด'
-    // existing lots sorted ascending by EXP — ส่งให้ overlay แสดงตำแหน่งจริง
+    
+    // ✨ NEW: แตก lots เป็น individual vials
     const sortedEx = [...ex].sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
-    const existingLots = sortedEx.map(l => ({ exp: fmtMY(l.expiry), expiry: l.expiry }))
+    const existingVials = []
+    let vialCounter = 1
+    for (const lot of sortedEx) {
+      for (let i = 0; i < lot.qty; i++) {
+        existingVials.push({
+          exp: fmtMY(lot.expiry),
+          expiry: lot.expiry,
+          vialNum: vialCounter++,
+          lotExpiry: lot.expiry  // เก็บไว้เช็ค FEFO
+        })
+      }
+    }
+    
+    // ส่ง existingVials แทน existingLots
+    const existingLots = existingVials
+    
     if (!ex.length) return { isFEFOSide: true, label: labelPick, reason: 'lot แรกในสต็อก', direction: dir, pickSide, putSide, existingLots }
     const fefoMs = new Date(ex[0].expiry).getTime()
     const retMs  = new Date(retExp).getTime()
@@ -1094,7 +1169,7 @@ export default function App() {
           <div className="bar-row">
             <div>
               <div className="bar-title">💊 Term-Ya Application</div>
-              <div className="bar-sub">Bangkok Hospital Chanthaburi : ICU-B</div>
+              <div className="bar-sub">Bangkok Hospital Chanthaburi : ICU-A</div>
             </div>
             <div style={{ display:'flex', alignItems:'center', gap:8 }}>
               <button onClick={() => setGlobalScanOpen(true)}
@@ -1124,6 +1199,7 @@ export default function App() {
               db={db} fmtMY={fmtMY} daysLeft={daysLeft} setQModal={setQModal}
               setSmartTimestampModal={setSmartTimestampModal}
               pendingSyncs={pendingSyncs}
+              withdrawals={withdrawals} checks={checks}
             />
           )}
           {curTab === 'check' && (
@@ -1149,6 +1225,7 @@ export default function App() {
               lotsOf={lotsOf} calcPutaway={calcPutaway} fmtDT={fmtDT} fmtMY={fmtMY}
               daysLeft={daysLeft} db={db} setPutaway={setPutaway}
               nurses={nurses} drugs={drugsWithStock()}
+              stockAdditions={stockAdditions}
             />
           )}
           {curTab === 'export' && (
@@ -1156,6 +1233,7 @@ export default function App() {
               drugsWithStock={drugsWithStock} lots={lots} withdrawals={withdrawals} expirySnapshots={expirySnapshots}
               checks={checks} daysLeft={daysLeft} fmtMY={fmtMY}
               calcPutaway={calcPutaway} lotsOf={lotsOf} removals={removals}
+              stockAdditions={stockAdditions} drugs={drugs}
             />
           )}
           {curTab === 'pending' && (
@@ -1769,6 +1847,20 @@ function ReplaceModal({ open, onClose, pending, drugsWithStock, lots, nurses, db
           addedAt: Timestamp.now(), source: 'replace', loaned: false
         })
 
+        // 2.1 Record in stock_additions (NEW)
+        await addDoc(collection(db, 'stock_additions'), {
+          nurse,
+          drugId: drug.id,
+          drugName: drug.name,
+          qty: item.qty,
+          expiry: newExpiry,
+          source: 'replace',
+          loaned: false,
+          ts: Timestamp.now(),
+          related_pending_id: pending.docId,
+          note: pending.source === 'emergency' ? 'Replace: Emergency' : 'Replace: Missing Tracked'
+        })
+
         // 3. Withdrawal record
         if (pending.source === 'missing_tracked') {
           // Missing: UPDATE withdrawal เดิม (ที่สร้างตอน Stock Count) แทนการสร้างใหม่
@@ -1856,15 +1948,23 @@ function ReplaceModal({ open, onClose, pending, drugsWithStock, lots, nurses, db
         // ใช้ getDrugDir() เหมือน calculateFEFOWithReturns
         const dir = getDrugDir(drugId)
         
-        // ✓ FIX: Format existingLots ให้มี 'exp' field สำหรับ PutawayOverlay
-        const formattedExistingLots = existingLots.map(l => ({
-          exp: fmtMY(l.expiry),
-          expiry: l.expiry
-        }))
+        // ✨ NEW: แตก lots เป็น individual vials
+        const sortedLots = [...existingLots].sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
+        const existingVials = []
+        let vialCounter = 1
+        for (const lot of sortedLots) {
+          for (let i = 0; i < lot.qty; i++) {
+            existingVials.push({
+              exp: fmtMY(lot.expiry),
+              expiry: lot.expiry,
+              vialNum: vialCounter++,
+              lotExpiry: lot.expiry
+            })
+          }
+        }
         
-        // คำนวณ position โดยใช้ Par (จำนวนชิ้นที่ควรมี)
-        // แทนการนับ lots
-        const sorted = [...formattedExistingLots, { expiry, isNew: true }]
+        // คำนวณ position โดยใช้ vials
+        const sorted = [...existingVials, { expiry, isNew: true }]
           .sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
         
         const newIndex = sorted.findIndex(l => l.isNew)
@@ -1873,8 +1973,8 @@ function ReplaceModal({ open, onClose, pending, drugsWithStock, lots, nurses, db
         return {
           direction: dir,
           position,
-          existingLots: formattedExistingLots,  // ✓ ส่ง formatted version
-          par: drug.par  // ← เพิ่ม par เพื่อให้ overlay ใช้
+          existingLots: existingVials,  // ส่ง vials แทน lots
+          par: drug.par
         }
       }
 
@@ -2444,13 +2544,34 @@ function PendingView({ pendingSyncs, withdrawals, drugs, nurses, db, setReplaceM
     const validEntries = state.entries.filter(e => (e.expM && e.expY) || e.fullDate)
     if (validEntries.length === 0) return alert('กรุณากรอก EXP อย่างน้อย 1 รายการ')
     
+    // 🔍 DEBUG: Log validEntries
+    console.log('[submitReturn Debug] validEntries:', validEntries.map(e => ({ qty: e.qty, expM: e.expM, expY: e.expY, fullDate: e.fullDate })))
+    console.log('[submitReturn Debug] Withdrawal:', { drugName: withdrawal.drugName, qty: withdrawal.qty })
+    
+    // 🛡️ SAFETY: ป้องกัน duplicate entries
+    const seen = new Set()
+    const uniqueEntries = validEntries.filter(entry => {
+      const key = `${entry.fullDate || ''}-${entry.expM || ''}-${entry.expY || ''}-${entry.qty || 0}`
+      if (seen.has(key)) {
+        console.warn('[submitReturn Warning] Duplicate entry detected and removed:', entry)
+        return false
+      }
+      seen.add(key)
+      return true
+    })
+    
+    if (uniqueEntries.length !== validEntries.length) {
+      console.error('[submitReturn ERROR] Removed', validEntries.length - uniqueEntries.length, 'duplicate entries!')
+      alert(`⚠️ ตรวจพบข้อมูลซ้ำ ${validEntries.length - uniqueEntries.length} รายการ - ระบบลบออกอัตโนมัติแล้ว`)
+    }
+    
     try {
       const dl = drugsWithStock()
       const drug = dl.find(d => d.id == withdrawal.drugId)
       if (!drug) throw new Error('ไม่พบข้อมูลยา')
       
       // บันทึกทุก lot ลง Firebase ก่อน
-      for (const entry of validEntries) {
+      for (const entry of uniqueEntries) {
         const iso = state.useFull
           ? entry.fullDate || '2099-12-31'
           : (entry.expM && entry.expY
@@ -2468,12 +2589,15 @@ function PendingView({ pendingSyncs, withdrawals, drugs, nurses, db, setReplaceM
       }
       
       // Update withdrawal — partial or full
-      const firstIso = validEntries[0].fullDate || myToISO(validEntries[0].expM, validEntries[0].expY)
-      const returnedNowQty = validEntries.reduce((s, e) => s + (e.qty || 1), 0)
+      const firstIso = uniqueEntries[0].fullDate || myToISO(uniqueEntries[0].expM, uniqueEntries[0].expY)
+      const returnedNowQty = uniqueEntries.reduce((s, e) => s + (e.qty || 1), 0)
       const prevReturnedQty = withdrawal.returned_qty || 0
       const newReturnedQty = prevReturnedQty + returnedNowQty
       const totalRequired = withdrawal.qty || 0
       const isFullyReturned = newReturnedQty >= totalRequired
+      
+      console.log('[submitReturn Debug] Summary:', { returnedNow: returnedNowQty, prev: prevReturnedQty, new: newReturnedQty, full: isFullyReturned })
+      
       await updateDoc(doc(db, 'withdrawals', withdrawal.docId), {
         returned_qty: newReturnedQty,
         returned: isFullyReturned,
@@ -2983,13 +3107,15 @@ function QuickUseModal({ open, onClose, drugsWithStock, lots, nurses, db, initDr
 }
 
 
-function Dashboard({ drugsWithStock, alerts, unret, lastCheck, lots, lotsOf, calcPutaway, nurses, setCurTab, setPutaway, db, fmtMY, daysLeft, setQModal, setSmartTimestampModal, pendingSyncs }) {
+function Dashboard({ drugsWithStock, alerts, unret, lastCheck, lots, lotsOf, calcPutaway, nurses, setCurTab, setPutaway, db, fmtMY, daysLeft, setQModal, setSmartTimestampModal, pendingSyncs, withdrawals, checks }) {
   const [retStates, setRetStates] = useState({})
+  
   const scrollTo = (id) => {
     const el = document.getElementById(id)
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
   const dl = drugsWithStock()
+  
   const openRet = docId => {
     const w = unret.find(x => x.docId === docId)
     // qty เริ่มต้น = ที่ยังเหลือ (qty - returned_qty)
@@ -3061,36 +3187,81 @@ function Dashboard({ drugsWithStock, alerts, unret, lastCheck, lots, lotsOf, cal
     const rs = retStates[w.docId]; if (!rs) return
     const drug = dl.find(d => d.id == w.drugId) || { name: w.drugName, unit: '' }
     const validEntries = rs.entries.filter(e => e.fullDate || (e.expM && e.expY))
+    
+    // 🔍 DEBUG: Log validEntries
+    console.log('[Return Debug] validEntries:', validEntries.map(e => ({ qty: e.qty, expM: e.expM, expY: e.expY, fullDate: e.fullDate })))
+    console.log('[Return Debug] Withdrawal:', { drugName: w.drugName, qty: w.qty, nurse: w.nurse })
+    
+    // 🛡️ SAFETY: ป้องกัน duplicate entries
+    const seen = new Set()
+    const uniqueEntries = validEntries.filter(entry => {
+      const key = `${entry.fullDate || ''}-${entry.expM || ''}-${entry.expY || ''}-${entry.qty || 0}`
+      if (seen.has(key)) {
+        console.warn('[Return Warning] Duplicate entry detected and removed:', entry)
+        return false
+      }
+      seen.add(key)
+      return true
+    })
+    
+    if (uniqueEntries.length !== validEntries.length) {
+      console.error('[Return ERROR] Removed', validEntries.length - uniqueEntries.length, 'duplicate entries!')
+      alert(`⚠️ ตรวจพบข้อมูลซ้ำ ${validEntries.length - uniqueEntries.length} รายการ - ระบบลบออกอัตโนมัติแล้ว`)
+    }
+    
     // บันทึกทุก lot ลง Firebase ก่อน
-    for (const entry of validEntries) {
+    for (const entry of uniqueEntries) {
       const iso = entry.fullDate || myToISO(entry.expM, entry.expY)
       if (!iso) continue
-      await addDoc(collection(db, 'lots'), { drugId: w.drugId, qty: entry.qty, expiry: iso, ts: Timestamp.now() })
+      await addDoc(collection(db, 'lots'), { 
+        drugId: w.drugId, 
+        qty: entry.qty, 
+        expiry: iso, 
+        source: 'return',
+        ts: Timestamp.now() 
+      })
+      
+      // Record in stock_additions (NEW)
+      await addDoc(collection(db, 'stock_additions'), {
+        nurse: w.nurse,
+        drugId: w.drugId,
+        drugName: w.drugName,
+        qty: entry.qty,
+        expiry: iso,
+        source: 'return',
+        loaned: false,
+        ts: Timestamp.now(),
+        related_withdrawal_id: w.docId,
+        note: 'Return: Stock Use'
+      })
     }
     // แสดง overlay พร้อม return lots ทั้งหมดพร้อมกัน
-    if (validEntries.length > 0) {
+    if (uniqueEntries.length > 0) {
       if (drug?.singleStock) {
         const group = STORAGE_GROUPS.find(g => g.id === drug.groupId)
-        const firstIso = validEntries[0].fullDate || myToISO(validEntries[0].expM, validEntries[0].expY)
-        setPutaway({ drug, qty: validEntries[0].qty, expiry: firstIso, context: 'return', singleStock: true, groupName: group?.name || '', groupIcon: group?.icon || '📦' })
+        const firstIso = uniqueEntries[0].fullDate || myToISO(uniqueEntries[0].expM, uniqueEntries[0].expY)
+        setPutaway({ drug, qty: uniqueEntries[0].qty, expiry: firstIso, context: 'return', singleStock: true, groupName: group?.name || '', groupIcon: group?.icon || '📦' })
       } else {
-        const firstIso = validEntries[0].fullDate || myToISO(validEntries[0].expM, validEntries[0].expY)
+        const firstIso = uniqueEntries[0].fullDate || myToISO(uniqueEntries[0].expM, uniqueEntries[0].expY)
         const pa = calcPutaway(w.drugId, firstIso)
-        const returnLots = validEntries
+        const returnLots = uniqueEntries
           .map(e => ({ expiry: e.fullDate || myToISO(e.expM, e.expY), qty: e.qty }))
           .filter(e => e.expiry)
           .sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
         setPutaway({ drug, returnLots, pa, context: 'return' })
       }
     }
-    const _retNow = validEntries.reduce((s, e) => s + (e.qty || 1), 0)
+    const _retNow = uniqueEntries.reduce((s, e) => s + (e.qty || 1), 0)
     const _prevRet = w.returned_qty || 0
     const _newRet  = _prevRet + _retNow
     const _isFull  = _newRet >= (w.qty || 0)
+    
+    console.log('[Return Debug] Summary:', { retNow: _retNow, prevRet: _prevRet, newRet: _newRet, isFull: _isFull })
+    
     await updateDoc(doc(db, 'withdrawals', w.docId), { 
       returned_qty: _newRet,
       returned: _isFull,
-      retExp: validEntries[0]?.fullDate || myToISO(validEntries[0]?.expM, validEntries[0]?.expY),
+      retExp: uniqueEntries[0]?.fullDate || myToISO(uniqueEntries[0]?.expM, uniqueEntries[0]?.expY),
       return_timestamp: Timestamp.now()
     })
     closeRet(w.docId)
@@ -3799,6 +3970,20 @@ function StockCount({ drugs, nurses, lots, lotsOf, db, fmtMY, daysLeft }) {
             const expiry = myToISO(lot.expM, lot.expY)
             const ref = doc(collection(db,'lots'))
             batch.set(ref, { drugId: d.id, qty: lot.qty, expiry, note:'stock-count-add', ts: Timestamp.now() })
+            
+            // Record in stock_additions (NEW)
+            const addRef = doc(collection(db,'stock_additions'))
+            batch.set(addRef, {
+              nurse,
+              drugId: d.id,
+              drugName: d.name,
+              qty: lot.qty,
+              expiry,
+              source: 'stock-count-add',
+              loaned: false,
+              ts: Timestamp.now(),
+              note: 'Stock Count: เพิ่มจากการนับ'
+            })
           }
         } else if (cnt > systemTotal && ls.length > 0) {
           batch.update(doc(db,'lots',ls[0].docId), { qty: ls[0].qty + (cnt - systemTotal) })
@@ -4543,7 +4728,30 @@ function Withdraw({ drugs, nurses, lots, lotsOf, withdrawals, calcPutaway, db, f
     const ex = lots.filter(l => l.drugId == rstDrugId && l.qty > 0).sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
     const pa = calcPutaway(rstDrugId, iso)
     const fefoExp = ex.length ? fmtMY(ex[0].expiry) : null
-    await addDoc(collection(db, 'lots'), { drugId: parseInt(rstDrugId), qty: rstQty, expiry: iso, loaned: rstLoaned, ts: Timestamp.now(), addedBy: rstNurse })
+    
+    await addDoc(collection(db, 'lots'), { 
+      drugId: parseInt(rstDrugId), 
+      qty: rstQty, 
+      expiry: iso, 
+      loaned: rstLoaned, 
+      source: 'restock',
+      ts: Timestamp.now(), 
+      addedBy: rstNurse 
+    })
+    
+    // Record in stock_additions (NEW)
+    await addDoc(collection(db, 'stock_additions'), {
+      nurse: rstNurse,
+      drugId: parseInt(rstDrugId),
+      drugName: drug.name,
+      qty: rstQty,
+      expiry: iso,
+      source: 'restock',
+      loaned: rstLoaned,
+      ts: Timestamp.now(),
+      note: 'เติมจากห้องยา'
+    })
+    
     setRstOk(true); setRstDrugId(''); setRstDQ(''); setRstQty(1); setRstExpM(''); setRstExpY(''); setRstFullDate(''); setRstLoaned(false)
     setTimeout(() => setRstOk(false), 2000)
     if (drug?.singleStock) {
@@ -4601,29 +4809,54 @@ function Withdraw({ drugs, nurses, lots, lotsOf, withdrawals, calcPutaway, db, f
     const entries = rs.entries || []
     const validEntries = entries.filter(e => e.fullDate || (e.expM && e.expY))
     if (!validEntries.length) return
+    
+    // 🔍 DEBUG: Log validEntries
+    console.log('[confirmRet Debug] validEntries:', validEntries.map(e => ({ qty: e.qty, expM: e.expM, expY: e.expY, fullDate: e.fullDate })))
+    console.log('[confirmRet Debug] Withdrawal:', { drugName: w.drugName, qty: w.qty })
+    
+    // 🛡️ SAFETY: ป้องกัน duplicate entries
+    const seen = new Set()
+    const uniqueEntries = validEntries.filter(entry => {
+      const key = `${entry.fullDate || ''}-${entry.expM || ''}-${entry.expY || ''}-${entry.qty || 0}`
+      if (seen.has(key)) {
+        console.warn('[confirmRet Warning] Duplicate entry detected and removed:', entry)
+        return false
+      }
+      seen.add(key)
+      return true
+    })
+    
+    if (uniqueEntries.length !== validEntries.length) {
+      console.error('[confirmRet ERROR] Removed', validEntries.length - uniqueEntries.length, 'duplicate entries!')
+      alert(`⚠️ ตรวจพบข้อมูลซ้ำ ${validEntries.length - uniqueEntries.length} รายการ - ระบบลบออกอัตโนมัติแล้ว`)
+    }
+    
     const drug = drugs.find(d => d.id == w.drugId) || { name: w.drugName, unit: '' }
     // บันทึกทุก lot ลง Firebase ก่อน
-    for (const entry of validEntries) {
+    for (const entry of uniqueEntries) {
       const iso = entry.fullDate || myToISO(entry.expM, entry.expY)
       await addDoc(collection(db, 'lots'), { drugId: w.drugId, qty: entry.qty, expiry: iso, ts: Timestamp.now() })
     }
     // แสดง overlay พร้อม return lots ทั้งหมดพร้อมกัน
-    if (validEntries.length > 0) {
+    if (uniqueEntries.length > 0) {
       if (drug?.singleStock) {
         const group = STORAGE_GROUPS.find(g => g.id === drug.groupId)
-        const firstIso = validEntries[0].fullDate || myToISO(validEntries[0].expM, validEntries[0].expY)
-        setPutaway({ drug, qty: validEntries[0].qty, expiry: firstIso, context: 'return', singleStock: true, groupName: group?.name || '', groupIcon: group?.icon || '📦' })
+        const firstIso = uniqueEntries[0].fullDate || myToISO(uniqueEntries[0].expM, uniqueEntries[0].expY)
+        setPutaway({ drug, qty: uniqueEntries[0].qty, expiry: firstIso, context: 'return', singleStock: true, groupName: group?.name || '', groupIcon: group?.icon || '📦' })
       } else {
-        const firstIso = validEntries[0].fullDate || myToISO(validEntries[0].expM, validEntries[0].expY)
+        const firstIso = uniqueEntries[0].fullDate || myToISO(uniqueEntries[0].expM, uniqueEntries[0].expY)
         const pa = calcPutaway(w.drugId, firstIso)
-        const returnLots = validEntries
+        const returnLots = uniqueEntries
           .map(e => ({ expiry: e.fullDate || myToISO(e.expM, e.expiry), qty: e.qty }))
           .filter(e => e.expiry)
           .sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
         setPutaway({ drug, returnLots, pa, context: 'return' })
       }
     }
-    const firstIso = validEntries[0].fullDate || myToISO(validEntries[0].expM, validEntries[0].expY)
+    const firstIso = uniqueEntries[0].fullDate || myToISO(uniqueEntries[0].expM, uniqueEntries[0].expY)
+    
+    console.log('[confirmRet Debug] Summary:', { entriesCount: uniqueEntries.length, firstIso })
+    
     await updateDoc(doc(db, 'withdrawals', w.docId), { 
       returned: true, 
       retExp: firstIso,
@@ -5118,10 +5351,17 @@ function Expiry({ lots, drugs, daysLeft, fmtMY, db, removals, nurses, drugsWithS
 }
 
 /* ═══ HISTORY ═══ */
-function History({ withdrawals, checks, lots, lotsOf, calcPutaway, fmtDT, fmtMY, daysLeft, db, setPutaway, nurses, drugs }) {
+function History({ withdrawals, checks, lots, lotsOf, calcPutaway, fmtDT, fmtMY, daysLeft, db, setPutaway, nurses, drugs, stockAdditions }) {
   const [tab, setTab] = useState('w')
   const [retStates, setRetStates] = useState({})
-  const [historyMonth, setHistoryMonth] = useState('all')
+  const [historyMonth, setHistoryMonth] = useState(() => {
+    const n = new Date()
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`
+  })
+  
+  // Filter states สำหรับ Stock Additions tab
+  const [filterDrug, setFilterDrug] = useState('all')
+  const [filterSource, setFilterSource] = useState('all')
 
   const openRet = docId => setRetStates(s => ({ ...s, [docId]: { open: true, expM: '', expY: '', preview: null } }))
   const closeRet = docId => setRetStates(s => ({ ...s, [docId]: undefined }))
@@ -5166,6 +5406,43 @@ function History({ withdrawals, checks, lots, lotsOf, calcPutaway, fmtDT, fmtMY,
     return ts.toISOString().slice(0,7) === historyMonth
   })
 
+  // Filter stock additions by month
+  let filteredAdditions = historyMonth === 'all' ? (stockAdditions || []) : (stockAdditions || []).filter(sa => {
+    const ts = sa.ts?.toDate ? sa.ts.toDate() : new Date(sa.ts)
+    return ts.toISOString().slice(0,7) === historyMonth
+  })
+
+  // Filter by drug
+  if (filterDrug !== 'all') {
+    filteredAdditions = filteredAdditions.filter(sa => sa.drugId == filterDrug)
+  }
+
+  // Filter by source
+  if (filterSource !== 'all') {
+    filteredAdditions = filteredAdditions.filter(sa => sa.source === filterSource)
+  }
+
+  // Source mapping
+  const sourceMap = {
+    'restock': { label: 'เติมจากห้องยา', icon: '📦', color: '#4CAF50' },
+    'return': { label: 'Return (Stock Use)', icon: '✓', color: '#2196F3' },
+    'replace': { label: 'Replace (Emergency/Missing)', icon: '🔄', color: '#FF9800' },
+    'stock-count-add': { label: 'Stock Count (เพิ่ม)', icon: '➕', color: '#9C27B0' }
+  }
+
+  // Summary by source
+  const sourceSummary = {}
+  filteredAdditions.forEach(sa => {
+    if (!sourceSummary[sa.source]) {
+      sourceSummary[sa.source] = { count: 0, totalUnits: 0 }
+    }
+    sourceSummary[sa.source].count++
+    sourceSummary[sa.source].totalUnits += sa.qty
+  })
+
+  // Get unique drugs from stock additions
+  const uniqueDrugs = [...new Set((stockAdditions || []).map(sa => sa.drugId))]
+
   return (
     <>
       {/* Month Filter Dropdown */}
@@ -5185,9 +5462,10 @@ function History({ withdrawals, checks, lots, lotsOf, calcPutaway, fmtDT, fmtMY,
         </select>
       </div>
 
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
         <button className={`btn full${tab === 'w' ? ' primary' : ''}`} onClick={() => setTab('w')}>เบิกยา ({filteredWithdrawals.length})</button>
         <button className={`btn full${tab === 'c' ? ' primary' : ''}`} onClick={() => setTab('c')}>เช็คสต็อก ({filteredChecks.length})</button>
+        <button className={`btn full${tab === 'a' ? ' primary' : ''}`} onClick={() => setTab('a')}>📥 เติมสต็อก ({filteredAdditions.length})</button>
       </div>
       <div className="card" style={{ padding: '0 14px' }}>
         {tab === 'w' ? (
@@ -5242,7 +5520,7 @@ function History({ withdrawals, checks, lots, lotsOf, calcPutaway, fmtDT, fmtMY,
               </div>
             )
           }) : <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: '#8BA898' }}>ยังไม่มีบันทึก</div>
-        ) : (
+        ) : tab === 'c' ? (
           filteredChecks.length ? filteredChecks.map(c => (
             <div key={c.docId} className="wrow">
               <div style={{ flex: 1 }}>
@@ -5255,6 +5533,87 @@ function History({ withdrawals, checks, lots, lotsOf, calcPutaway, fmtDT, fmtMY,
               <span className="b bg">✓ เช็คแล้ว</span>
             </div>
           )) : <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: '#8BA898' }}>ยังไม่มีบันทึก</div>
+        ) : (
+          /* Stock Additions Tab */
+          <>
+            {/* Filters */}
+            <div style={{ padding: '12px 0 8px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <select value={filterDrug} onChange={e => setFilterDrug(e.target.value)}
+                style={{ flex: 1, minWidth: 120, padding: '6px 8px', borderRadius: 6, border: '0.5px solid #D8EAE0', fontSize: 11 }}>
+                <option value="all">ทุกยา</option>
+                {uniqueDrugs.map(drugId => {
+                  const drug = drugs.find(d => d.id == drugId)
+                  const count = filteredAdditions.filter(sa => sa.drugId == drugId).length
+                  return drug ? <option key={drugId} value={drugId}>{drug.name} ({count})</option> : null
+                })}
+              </select>
+              
+              <select value={filterSource} onChange={e => setFilterSource(e.target.value)}
+                style={{ flex: 1, minWidth: 120, padding: '6px 8px', borderRadius: 6, border: '0.5px solid #D8EAE0', fontSize: 11 }}>
+                <option value="all">ทุกประเภท</option>
+                {Object.keys(sourceMap).map(source => {
+                  const count = filteredAdditions.filter(sa => sa.source === source).length
+                  return count > 0 ? <option key={source} value={source}>{sourceMap[source].label} ({count})</option> : null
+                })}
+              </select>
+            </div>
+
+            {/* Summary by source */}
+            {Object.keys(sourceSummary).length > 0 && (
+              <div style={{ padding: '8px 0 12px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {Object.keys(sourceMap).map(source => {
+                  const summary = sourceSummary[source]
+                  if (!summary) return null
+                  const info = sourceMap[source]
+                  return (
+                    <div key={source} style={{ 
+                      flex: '1 1 auto', 
+                      minWidth: 100,
+                      padding: '6px 10px', 
+                      background: `${info.color}15`, 
+                      border: `0.5px solid ${info.color}60`,
+                      borderRadius: 8,
+                      fontSize: 10
+                    }}>
+                      <div style={{ fontWeight: 600, color: info.color }}>{info.icon} {summary.count}ครั้ง</div>
+                      <div style={{ color: '#5F7A6A', marginTop: 2 }}>{summary.totalUnits} หน่วย</div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* List of stock additions */}
+            {filteredAdditions.length > 0 ? filteredAdditions.map(sa => {
+              const drug = drugs.find(d => d.id == sa.drugId)
+              const info = sourceMap[sa.source] || { label: sa.source, icon: '?', color: '#757575' }
+              return (
+                <div key={sa.docId} className="wrow">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, fontWeight: 500 }}>{sa.drugName || drug?.name}</span>
+                      <span className="b bb">×{sa.qty}</span>
+                      <span className="b" style={{
+                        background: `${info.color}15`,
+                        color: info.color,
+                        border: `0.5px solid ${info.color}60`,
+                        fontSize: 10,
+                        padding: '2px 7px'
+                      }}>
+                        {info.icon} {info.label}
+                      </span>
+                      {sa.loaned && <span className="b" style={{background:'#FFF9C4',color:'#F57F17',border:'0.5px solid #FFF59D',fontSize:10,padding:'2px 7px'}}>🏥 ฝากใช้</span>}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#8BA898' }}>
+                      {sa.nurse} · EXP {fmtMY(sa.expiry)}
+                      {sa.note && ` · ${sa.note}`}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#8BA898', fontFamily: 'monospace' }}>{sa.ts && fmtDT(sa.ts)}</div>
+                  </div>
+                </div>
+              )
+            }) : <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: '#8BA898' }}>ไม่พบข้อมูล</div>}
+          </>
         )}
       </div>
     </>
@@ -5262,10 +5621,10 @@ function History({ withdrawals, checks, lots, lotsOf, calcPutaway, fmtDT, fmtMY,
 }
 
 /* ═══ EXPORT ═══ */
-function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, calcPutaway, lotsOf, removals, expirySnapshots }) {
+function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, calcPutaway, lotsOf, removals, expirySnapshots, stockAdditions, drugs }) {
   const dl = drugsWithStock()
   const [reportDays, setReportDays] = useState(30)
-  const [kpiMonth, setKpiMonth] = useState('all')
+  const [kpiMonth, setKpiMonth] = useState(() => { const n=new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}` })
   const [logMonth, setLogMonth] = useState(() => { const n=new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}` })
   const [withdrawalMonth, setWithdrawalMonth] = useState(() => { const n=new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}` })
   const [reportMonth, setReportMonth] = useState(() => { const n=new Date(); n.setMonth(n.getMonth()-1); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}` })
@@ -5280,13 +5639,19 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
     a.click(); URL.revokeObjectURL(url)
   }
 
+  // กรอง checks ตามเดือนที่เลือก (สำหรับ KPI)
+  const kpiChecks = kpiMonth === 'all' ? checks : checks.filter(c => {
+    const ts = c.ts?.toDate ? c.ts.toDate() : new Date(c.ts)
+    return ts.toISOString().slice(0,7) === kpiMonth
+  })
+
   /* ── Compliance calculation ── */
-  const calcCompliance = (days) => {
+  const calcCompliance = (days, filteredChecks = checks) => {
     const now   = new Date()
     const start = new Date(now); start.setDate(start.getDate() - days + 1); start.setHours(0,0,0,0)
     // สร้าง map: "YYYY-MM-DD_Day"|"YYYY-MM-DD_Night" → true
     const done = new Set()
-    checks.forEach(c => {
+    filteredChecks.forEach(c => {
       const ts = c.ts?.toDate ? c.ts.toDate() : new Date(c.ts)
       if (ts < start) return
       const shiftKey = c.shift?.includes('Day') ? 'Day' : 'Night'
@@ -5313,8 +5678,8 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
     return { daily, expected, actual, rate, days: daily.length }
   }
 
-  const comp = calcCompliance(reportDays)
-  const checksWithDur = checks.filter(c => c.durationMin != null)
+  const comp = calcCompliance(reportDays, kpiChecks)
+  const checksWithDur = kpiChecks.filter(c => c.durationMin != null)
   const avgDur = checksWithDur.length
     ? Math.round(checksWithDur.reduce((s,c)=>s+(c.durationMin||0),0)/checksWithDur.length*10)/10 : null
 
@@ -5323,12 +5688,6 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
   const missedExchange     = removals.filter(r => r.missedExchange).length          // expired โดยไม่ได้แลก
   const returnedInTime     = removals.filter(r => r.reason==='returned_to_pharmacy' && r.daysBeforeExp > 0).length
   const missedExchangeRate = totalRemoved > 0 ? Math.round(missedExchange/totalRemoved*1000)/10 : null
-
-  // กรอง checks ตามเดือนที่เลือก (สำหรับ KPI)
-  const kpiChecks = kpiMonth === 'all' ? checks : checks.filter(c => {
-    const ts = c.ts?.toDate ? c.ts.toDate() : new Date(c.ts)
-    return ts.toISOString().slice(0,7) === kpiMonth
-  })
 
   // Stock Deficiency Rate (avg จาก kpiChecks)
   const checksWithDef = kpiChecks.filter(c => c.deficiencyRate != null)
@@ -5345,6 +5704,12 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
     ? Math.round(checksWithUnt.reduce((s,c)=>s+(c.untracedRate||0),0)/checksWithUnt.length*10)/10 : null
   const totalUntracedUnits = checksWithUnt.reduce((s,c) => s + (c.totalDiscrepancyUnits||0), 0)
 
+  // Filter withdrawals ตาม kpiMonth
+  const kpiWithdrawals = kpiMonth === 'all' ? withdrawals : withdrawals.filter(w => {
+    const ts = w.ts?.toDate ? w.ts.toDate() : new Date(w.ts)
+    return ts.toISOString().slice(0, 7) === kpiMonth
+  })
+
   // unique months จาก checks (สำหรับ dropdown)
   const availableMonths = [...new Set(checks.map(c => {
     const ts = c.ts?.toDate ? c.ts.toDate() : new Date(c.ts)
@@ -5356,7 +5721,7 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
     const c = calcCompliance(reportDays)
     let csv = `=== รายงานอัตราการเช็คสต็อกยา ===\r\n`
     csv += `ช่วงเวลา: ${reportDays} วันย้อนหลัง\r\n`
-    csv += `Bangkok Hospital Chanthaburi : ICU-B\r\n\r\n`
+    csv += `Bangkok Hospital Chanthaburi : ICU-A\r\n\r\n`
     csv += `สรุป:\r\n`
     csv += `เป้าหมาย,${c.expected} ครั้ง (${c.days} วัน × 2 เวร)\r\n`
     csv += `เช็คจริง,${c.actual} ครั้ง\r\n`
@@ -5409,7 +5774,7 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
     filtered.forEach(w => { drugUsage[w.drugName] = (drugUsage[w.drugName]||0) + w.qty })
     const topDrugs = Object.entries(drugUsage).sort((a,b)=>b[1]-a[1]).slice(0,5)
 
-    let csv = `Bangkok Hospital Chanthaburi : ICU-B\r\n`
+    let csv = `Bangkok Hospital Chanthaburi : ICU-A\r\n`
     csv += `=== ประวัติการใช้ยา/Return : ${mLabel} ===\r\n\r\n`
     csv += `=== สรุปทั่วไป ===\r\n`
     csv += `จำนวนครั้งใช้ยาทั้งหมด,${totalUses}\r\n`
@@ -5584,7 +5949,7 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
       return ts.getFullYear() === ry && ts.getMonth()+1 === rm
     })
     const snapNote = snap ? `(Snapshot: ${snap.monthKey})` : '(ไม่มี Snapshot — ใช้ข้อมูล ณ ปัจจุบัน)'
-    let csv = `=== Term-Ya Monthly Report ===\r\n${mLabel}  ${snapNote}\r\nBangkok Hospital Chanthaburi : ICU-B\r\n\r\n`
+    let csv = `=== Term-Ya Monthly Report ===\r\n${mLabel}  ${snapNote}\r\nBangkok Hospital Chanthaburi : ICU-A\r\n\r\n`
     // ── ส่วนสต็อก ──
     csv += 'ชื่อยา,สต็อก,par,FEFO EXP,สถานะ\r\n'
     if (snap?.allDrugStocks?.length) {
@@ -5713,7 +6078,7 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
       .find(c=>c.totalDrugs)?.totalDrugs || 0
 
     // ── Section 1: Monthly Summary ──
-    let csv = `Bangkok Hospital Chanthaburi : ICU-B\r\n`
+    let csv = `Bangkok Hospital Chanthaburi : ICU-A\r\n`
     csv += `=== รายงานประจำเดือน : ${mName} ===\r\n\r\n`
     csv += `=== สรุปรายเดือน ===\r\n`
     csv += `เดือน,Compliance Rate (%),เช็คจริง,เป้าหมาย,`
@@ -5785,6 +6150,58 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
   // keep alias for backward compat
   const exportMonthLog = exportCombinedMonthLog
 
+  /* ── Stock Additions Export ── */
+  const exportStockAdditions = () => {
+    const sourceMap = {
+      'restock': 'เติมจากห้องยา',
+      'return': 'Return (Stock Use)',
+      'replace': 'Replace (Emergency/Missing)',
+      'stock-count-add': 'Stock Count (เพิ่ม)'
+    }
+    
+    let csv = 'Bangkok Hospital Chanthaburi : ICU-A\r\n'
+    csv += '=== ประวัติการเพิ่มสต็อก (Stock Additions) ===\r\n\r\n'
+    csv += 'วันเวลา,พยาบาล,ยา,จำนวน,หน่วย,EXP,ประเภท,ฝากใช้,หมายเหตุ\r\n'
+    
+    const sorted = [...stockAdditions].sort((a,b) => {
+      const aTime = a.ts?.toDate ? a.ts.toDate() : new Date(a.ts)
+      const bTime = b.ts?.toDate ? b.ts.toDate() : new Date(b.ts)
+      return bTime - aTime
+    })
+    
+    sorted.forEach(sa => {
+      const drug = drugs.find(d => d.id == sa.drugId)
+      const unit = drug?.unit || ''
+      const timestamp = fmtDTsafe(sa.ts)
+      const expiry = fmtMY(sa.expiry)
+      const sourceLabel = sourceMap[sa.source] || sa.source
+      const loanedLabel = sa.loaned ? 'ใช่' : ''
+      const note = sa.note || ''
+      
+      csv += `"${timestamp}","${sa.nurse}","${sa.drugName}",${sa.qty},"${unit}","${expiry}","${sourceLabel}","${loanedLabel}","${note}"\r\n`
+    })
+    
+    csv += '\r\n=== สรุปตามประเภท ===\r\n'
+    csv += 'ประเภท,จำนวนครั้ง,จำนวนหน่วยรวม\r\n'
+    
+    const bySource = {}
+    sorted.forEach(sa => {
+      if (!bySource[sa.source]) {
+        bySource[sa.source] = { count: 0, totalUnits: 0 }
+      }
+      bySource[sa.source].count++
+      bySource[sa.source].totalUnits += sa.qty
+    })
+    
+    Object.keys(sourceMap).forEach(source => {
+      const data = bySource[source] || { count: 0, totalUnits: 0 }
+      csv += `"${sourceMap[source]}",${data.count},${data.totalUnits}\r\n`
+    })
+    
+    csv += '\r\nExport โดย Term-Ya Application\r\n'
+    exportCSV('Stock_Additions', csv)
+  }
+
   /* ── Bar chart helper ── */
   const barColor = (total) => total === 2 ? '#0F6E56' : total === 1 ? '#854F0B' : '#E24B4A'
   const rateColor = comp.rate >= 80 ? '#0F6E56' : comp.rate >= 50 ? '#854F0B' : '#A32D2D'
@@ -5806,7 +6223,7 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
         return ta - tb
       })
 
-    let csv = `Bangkok Hospital Chanthaburi : ICU-B\r\n`
+    let csv = `Bangkok Hospital Chanthaburi : ICU-A\r\n`
     csv += `=== บันทึกอุณหภูมิตู้เย็นยา : ${mLabel} ===\r\n`
     csv += `เกณฑ์ปกติ: 2–8 องศาเซลเซียส\r\n\r\n`
 
@@ -5849,7 +6266,7 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
 
   const exportExpirySnapshots = () => {
     if (!expirySnapshots.length) { alert('ยังไม่มีข้อมูล Snapshot (จะบันทึกอัตโนมัติเมื่อเปิดแอปในต้นเดือนถัดไป)'); return }
-    let csv = `Bangkok Hospital Chanthaburi : ICU-B\r\n`
+    let csv = `Bangkok Hospital Chanthaburi : ICU-A\r\n`
     csv += `=== Expiry Snapshot รายเดือน ===\r\n\r\n`
     csv += `=== สรุปทุกเดือน ===\r\n`
     csv += `เดือน,หมดอายุ (lot),เกินเวลาแลก (lot),ถึงเวลาแลก (lot)\r\n`
@@ -5876,6 +6293,7 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
     { label: 'รายงานประจำเดือน',          desc: 'สรุป stock + ยาหมดอายุ + อัตราเช็คยา',  fn: exportMonthly },
     { label: 'สต็อกปัจจุบัน',             desc: 'ทุก drug + จำนวน + สถานะ',             fn: exportStock },
     { label: 'ข้อมูล Lot + EXP',          desc: 'ทุก lot เรียงตาม EXP',                  fn: exportLots },
+    { label: '📥 ประวัติเติมสต็อก',        desc: 'ทุกครั้งที่เพิ่มยา — แยกตาม source',    fn: exportStockAdditions },
     { label: 'ประวัติใช้ยา/Return',        desc: 'ตามเดือนที่เลือก + Expiry Snapshot',  fn: exportWithdrawals },
     { label: 'ประวัติเช็คยารายวัน (CSV)',    desc: 'ตามเดือนที่เลือกด้านบน',               fn: exportMonthLog },
     { label: 'จำนวนยาต่อ session (Matrix)',   desc: 'ยา × session — ทุกครั้งที่นับ',         fn: exportDrugCountMatrix },
@@ -6034,7 +6452,7 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
           <div className="sc-l" style={{ color:'#3B6D11' }}>รายการยา</div>
         </div>
         <div className="sc" style={{ background:'#E6F1FB', borderColor:'#B5D4F4' }}>
-          <div className="sc-n" style={{ color:'#185FA5' }}>{withdrawals.length}</div>
+          <div className="sc-n" style={{ color:'#185FA5' }}>{kpiWithdrawals.length}</div>
           <div className="sc-l" style={{ color:'#185FA5' }}>บันทึกใช้ยา</div>
         </div>
         <div className="sc" style={{ background:'#FAEEDA', borderColor:'#FAC775' }}>
@@ -6042,7 +6460,7 @@ function Export({ drugsWithStock, lots, withdrawals, checks, daysLeft, fmtMY, ca
           <div className="sc-l" style={{ color:'#854F0B' }}>ใกล้หมดอายุ</div>
         </div>
         <div className="sc" style={{ background:'#EEEDFE', borderColor:'#CECBF6' }}>
-          <div className="sc-n" style={{ color:'#3C3489' }}>{checks.length}</div>
+          <div className="sc-n" style={{ color:'#3C3489' }}>{kpiChecks.length}</div>
           <div className="sc-l" style={{ color:'#3C3489' }}>ครั้งเช็คสต็อก</div>
         </div>
       </div>
