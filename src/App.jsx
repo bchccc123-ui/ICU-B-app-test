@@ -393,34 +393,11 @@ function PutawayOverlay({ drug, drugs, qty, expiry, returnLots, pa, fefoExp, con
               const pos = item.pa.position || 1
               const par = item.pa.par || (item.pa.existingLots?.length || 0) + 1
               
-              if (dir === 'rtl') {
-                // RTL: ขวา = EXP ก่อน
-                if (pos === 1) {
-                  positionLabel = 'วางช่อง 1 (ขวาสุด)'
-                } else if (pos === par) {
-                  positionLabel = `วางช่อง ${pos} (ซ้ายสุด)`
-                } else {
-                  positionLabel = `วางช่องที่ ${pos} จากขวา`
-                }
-              } else if (dir === 'fb') {
-                // FB: หน้า = EXP ก่อน
-                if (pos === 1) {
-                  positionLabel = 'วางช่อง 1 (หน้าสุด)'
-                } else if (pos === par) {
-                  positionLabel = `วางช่อง ${pos} (หลังสุด)`
-                } else {
-                  positionLabel = `วางช่องที่ ${pos} จากด้านหน้า`
-                }
-              } else {
-                // LTR: ซ้าย = EXP ก่อน
-                if (pos === 1) {
-                  positionLabel = 'วางช่อง 1 (ซ้ายสุด)'
-                } else if (pos === par) {
-                  positionLabel = `วางช่อง ${pos} (ขวาสุด)`
-                } else {
-                  positionLabel = `วางช่องที่ ${pos} จากซ้าย`
-                }
-              }
+              // คำนวณจำนวน vials ที่คืน
+              const returnQty = item.returnLots?.reduce((s, l) => s + l.qty, 0) || item.qty || 1
+              
+              // แสดงจำนวนยาที่คืนแทน position
+              positionLabel = `คืนยา ${returnQty} ${item.drug.unit} → รวมเป็น ${par} ${item.drug.unit}`
             }
             
             return (
@@ -492,56 +469,48 @@ function PutawayOverlay({ drug, drugs, qty, expiry, returnLots, pa, fefoExp, con
                         <div style={{ display:'flex', gap:4, flexWrap:'wrap', overflowX:'auto', maxWidth:'100%' }}>
                           {/* Build timeline array แสดง individual vials */}
                           {(() => {
-                            const timelineItems = []
+                            const allVials = []
                             const existingVials = item.pa.existingLots || []
-                            const numReturning = item.qty || item.returnLots?.reduce((s,l)=>s+l.qty,0) || 1
                             
                             // เพิ่ม existing vials
-                            existingVials.forEach((vial, idx) => {
-                              timelineItems.push(
-                                <div key={`vial-${idx}`} style={{ 
-                                  fontSize:9, 
-                                  padding:'4px 6px', 
-                                  borderRadius:6, 
-                                  background:'rgba(255,255,255,0.08)', 
-                                  border:'1px solid rgba(255,255,255,0.15)', 
-                                  color:'rgba(255,255,255,0.6)',
-                                  whiteSpace:'nowrap'
-                                }}>
-                                  {fmtMY(vial.expiry)}
-                                  <div style={{fontSize:7, opacity:0.5}}>เดิม</div>
-                                </div>
-                              )
+                            existingVials.forEach((vial) => {
+                              allVials.push({
+                                exp: fmtMY(vial.expiry),
+                                expiry: vial.expiry,
+                                isReturn: false
+                              })
                             })
                             
-                            // เพิ่ม new vials (วางตรงนี้) - แสดง EXP แต่ละ lot
+                            // เพิ่ม return vials
                             if (item.returnLots && item.returnLots.length > 0) {
-                              // หลาย lots - แสดง EXP แต่ละอัน
-                              item.returnLots.forEach((lot, lotIdx) => {
+                              item.returnLots.forEach((lot) => {
                                 for (let i = 0; i < lot.qty; i++) {
-                                  timelineItems.push(
-                                    <div key={`new-${lotIdx}-${i}`} style={{ 
-                                      fontSize:9, 
-                                      padding:'4px 6px', 
-                                      borderRadius:6, 
-                                      background:'rgba(93,219,167,0.3)', 
-                                      border:'1px solid rgba(93,219,167,0.5)', 
-                                      color:'#5DDBA7', 
-                                      fontWeight:700,
-                                      whiteSpace:'nowrap'
-                                    }}>
-                                      📍 {fmtMY(lot.expiry)}
-                                      <div style={{fontSize:7, opacity:0.8}}>วาง</div>
-                                    </div>
-                                  )
+                                  allVials.push({
+                                    exp: fmtMY(lot.expiry),
+                                    expiry: lot.expiry,
+                                    isReturn: true
+                                  })
                                 }
                               })
                             } else {
-                              // Single lot - แสดง EXP
                               const numReturning = item.qty || 1
                               for (let i = 0; i < numReturning; i++) {
-                                timelineItems.push(
-                                  <div key={`new-${i}`} style={{ 
+                                allVials.push({
+                                  exp: fmtMY(item.expiry),
+                                  expiry: item.expiry,
+                                  isReturn: true
+                                })
+                              }
+                            }
+                            
+                            // ✨ Sort ทั้งหมดตาม EXP (ascending)
+                            allVials.sort((a, b) => new Date(a.expiry) - new Date(b.expiry))
+                            
+                            // Build UI elements
+                            const timelineItems = allVials.map((vial, idx) => {
+                              if (vial.isReturn) {
+                                return (
+                                  <div key={`vial-${idx}`} style={{ 
                                     fontSize:9, 
                                     padding:'4px 6px', 
                                     borderRadius:6, 
@@ -551,12 +520,27 @@ function PutawayOverlay({ drug, drugs, qty, expiry, returnLots, pa, fefoExp, con
                                     fontWeight:700,
                                     whiteSpace:'nowrap'
                                   }}>
-                                    📍 {fmtMY(item.expiry)}
+                                    📍 {vial.exp}
                                     <div style={{fontSize:7, opacity:0.8}}>วาง</div>
                                   </div>
                                 )
+                              } else {
+                                return (
+                                  <div key={`vial-${idx}`} style={{ 
+                                    fontSize:9, 
+                                    padding:'4px 6px', 
+                                    borderRadius:6, 
+                                    background:'rgba(255,255,255,0.08)', 
+                                    border:'1px solid rgba(255,255,255,0.15)', 
+                                    color:'rgba(255,255,255,0.6)',
+                                    whiteSpace:'nowrap'
+                                  }}>
+                                    {vial.exp}
+                                    <div style={{fontSize:7, opacity:0.5}}>เดิม</div>
+                                  </div>
+                                )
                               }
-                            }
+                            })
                             
                             // Reverse เฉพาะ RTL
                             if (item.pa.direction === 'rtl') {
